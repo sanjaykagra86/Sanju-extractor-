@@ -7,4 +7,4 @@ def hello_world():
 
 
 if name == "main":
-    app.run(
+    app.run()
