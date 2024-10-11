@@ -45,7 +45,7 @@ custom_button = [[
 
 button1 = [              
                 [
-                    InlineKeyboardButton("Careerwill", callback_data="careerwilll_"),
+                    
                     InlineKeyboardButton("Sahil Sir", callback_data="Sahil_sir"),
                     InlineKeyboardButton("Ashish Sing Lec", callback_data="Ashish_lec"),   
                     InlineKeyboardButton("Acharya Classes", callback_data="acharya_classes"),
